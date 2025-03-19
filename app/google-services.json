@@ -1,0 +1,48 @@
+{
+  "project_info": {
+    "project_number": "256699100715",
+    "project_id": "hisma-lubricentro",
+    "storage_bucket": "hisma-lubricentro.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:256699100715:android:cdd66508aac6339458046e",
+        "android_client_info": {
+          "package_name": "com.example.hisma"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyD76i3EQxmG9ZmYtTo5pGRUbEG0qg1Req0"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    },
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:256699100715:android:2b643de9358fed8d58046e",
+        "android_client_info": {
+          "package_name": "com.example.hismalubricentro"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyD76i3EQxmG9ZmYtTo5pGRUbEG0qg1Req0"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}
