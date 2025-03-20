@@ -24,6 +24,8 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.style.TextAlign
 import com.example.hisma.R
+import com.example.hisma.utils.SubscriptionManager
+import java.util.Calendar
 
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -39,6 +41,12 @@ fun HomeOwnerScreen(navController: NavController) {
     var userName by remember { mutableStateOf("Dueño") }
     var isLoading by remember { mutableStateOf(true) }
     var subscriptionInfo by remember { mutableStateOf("") }
+    var suscripcionActiva by remember { mutableStateOf(false) }
+    var cambiosRestantes by remember { mutableStateOf(0) }
+    var diasRestantes by remember { mutableStateOf(0) }
+    var fechaVencimiento by remember { mutableStateOf("") }
+    var isLoadingSuscripcion by remember { mutableStateOf(true) }
+
 
     // Nuevas variables para control de estado de activación
     var isLubricentroActive by remember { mutableStateOf(true) }
@@ -49,104 +57,35 @@ fun HomeOwnerScreen(navController: NavController) {
             val currentUser = auth.currentUser
             if (currentUser != null) {
                 val doc = db.collection("lubricentros").document(currentUser.uid).get().await()
-
-                // Verificar si el lubricentro está activo en la base de datos
-                isLubricentroActive = doc.getBoolean("activo") ?: true
-
-                if (!isLubricentroActive) {
-                    accountDisabledReason = "Su cuenta ha sido desactivada por el administrador."
-                    isLoading = false
-                    return@LaunchedEffect
-                }
-
                 userName = if (doc.exists() && doc.getString("nombreFantasia") != null)
                     doc.getString("nombreFantasia")!!
                 else
                     currentUser.email ?: "Dueño"
 
-                // Obtener información de suscripción
-                val subscriptionMap = doc.get("subscription") as? Map<*, *>
+                // Cargar información de suscripción
+                val subscriptionManager = SubscriptionManager(context)
+                subscriptionManager.checkActiveSubscription { result ->
+                    if (result.isSuccess) {
+                        val subscription = result.getOrNull()
+                        if (subscription != null) {
+                            suscripcionActiva = subscription.active && subscription.valid
+                            cambiosRestantes = subscription.availableChanges
 
-                if (subscriptionMap != null) {
-                    val isActive = subscriptionMap["active"] as? Boolean ?: false
+                            // Calcular días restantes
+                            val hoy = Calendar.getInstance().time.time
+                            val vencimiento = subscription.endDate.toDate().time
+                            diasRestantes = ((vencimiento - hoy) / (1000 * 60 * 60 * 24)).toInt()
 
-                    if (!isActive) {
-                        isLubricentroActive = false
-                        accountDisabledReason = "Su suscripción ha expirado o está inactiva."
-                        isLoading = false
-                        return@LaunchedEffect
-                    }
-
-                    // Verificar estado de la fecha de fin
-                    val endDateTimestamp = subscriptionMap["endDate"] as? com.google.firebase.Timestamp
-                    if (endDateTimestamp != null) {
-                        val endDate = endDateTimestamp.toDate().time
-                        val currentDate = System.currentTimeMillis()
-
-                        // Calcular días restantes
-                        val millisUntilEnd = endDate - currentDate
-                        val daysUntilEnd = (millisUntilEnd / (1000 * 60 * 60 * 24)).toInt()
-
-                        // Si han pasado 7 días desde la fecha de fin, desactivar cuenta
-                        if (daysUntilEnd < -7) {
-                            isLubricentroActive = false
-                            accountDisabledReason = "Su suscripción ha vencido hace más de 7 días."
-
-                            // Actualizar estado en la base de datos
-                            db.collection("lubricentros")
-                                .document(currentUser.uid)
-                                .update(
-                                    "activo", false,
-                                    "subscription.active", false
-                                )
-
-                            isLoading = false
-                            return@LaunchedEffect
-                        }
-
-                        // Si ya venció pero no han pasado 7 días, mostrar pantalla de contacto
-                        if (daysUntilEnd < 0) {
-                            isLubricentroActive = false
-                            accountDisabledReason = "Su suscripción ha vencido. Tiene ${-daysUntilEnd} días para renovar antes de que su cuenta se desactive completamente."
-                            isLoading = false
-                            return@LaunchedEffect
-                        }
-
-                        // Comprobar si quedan 7 días o menos
-                        val showWarning = daysUntilEnd <= 7
-
-                        // Verificar número de cambios disponibles
-                        val availableChanges = (subscriptionMap["availableChanges"] as? Number)?.toInt() ?: 0
-                        val plan = (subscriptionMap["plan"] as? String ?: "").capitalize()
-                        val isTrial = subscriptionMap["trialActivated"] as? Boolean ?: false
-
-                        if (availableChanges <= 0) {
-                            // Si no hay cambios disponibles, mostrar pantalla de contacto
-                            isLubricentroActive = false
-                            accountDisabledReason = "Ha agotado los cambios disponibles en su plan. Por favor contacte con nosotros para ampliar su plan."
-                            isLoading = false
-                            return@LaunchedEffect
+                            // Formatear fecha
+                            fechaVencimiento = java.text.SimpleDateFormat("dd/MM/yyyy", java.util.Locale.getDefault())
+                                .format(subscription.endDate.toDate())
                         } else {
-                            // Formatear mensaje según estado
-                            subscriptionInfo = if (isTrial) {
-                                "Plan de Prueba: $daysUntilEnd días restantes, $availableChanges cambios disponibles"
-                            } else {
-                                "Plan $plan: $daysUntilEnd días restantes, $availableChanges cambios disponibles"
-                            }
-
-                            // Agregar advertencia si queda poco tiempo
-                            if (showWarning) {
-                                showRenewalWarning = true
-                                renewalWarningMessage = "¡ATENCIÓN! Su plan vencerá en $daysUntilEnd día${if (daysUntilEnd == 1) "" else "s"}. Contacte con nosotros para renovar."
-                            }
+                            suscripcionActiva = false
                         }
+                    } else {
+                        suscripcionActiva = false
                     }
-                } else {
-                    // No tiene suscripción configurada
-                    isLubricentroActive = false
-                    accountDisabledReason = "No tiene un plan de suscripción activo."
-                    isLoading = false
-                    return@LaunchedEffect
+                    isLoadingSuscripcion = false
                 }
             } else {
                 navController.navigate(Screen.Login.route) {
@@ -155,7 +94,6 @@ fun HomeOwnerScreen(navController: NavController) {
             }
         } catch (e: Exception) {
             // Manejo de error
-            Log.e("HomeOwnerScreen", "Error cargando datos: ${e.message}")
         } finally {
             isLoading = false
         }
@@ -395,6 +333,62 @@ fun HomeOwnerScreen(navController: NavController) {
                     colors = ButtonDefaults.buttonColors(containerColor = Color(0xFFE91E63))
                 ) {
                     Text("Informes")
+                }
+
+
+
+                // Estado de Suscripción
+                Spacer(modifier = Modifier.height(24.dp))
+                Card(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(8.dp)
+                ) {
+                    Column(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(16.dp),
+                        horizontalAlignment = Alignment.CenterHorizontally
+                    ) {
+                        Text(
+                            text = "Estado de Suscripción",
+                            style = MaterialTheme.typography.titleLarge,
+                            color = MaterialTheme.colorScheme.primary
+                        )
+
+                        if (isLoadingSuscripcion) {
+                            CircularProgressIndicator(modifier = Modifier.padding(16.dp))
+                        } else {
+                            Spacer(modifier = Modifier.height(8.dp))
+
+                            if (suscripcionActiva) {
+                                Text(
+                                    text = "Suscripción Activa",
+                                    style = MaterialTheme.typography.bodyLarge,
+                                    color = Color.Green
+                                )
+                                Text("Cambios restantes: $cambiosRestantes")
+                                Text("Días restantes: $diasRestantes")
+                                Text("Vence el: $fechaVencimiento")
+                            } else {
+                                Text(
+                                    text = "Sin Suscripción Activa",
+                                    style = MaterialTheme.typography.bodyLarge,
+                                    color = Color.Red
+                                )
+                                Text("No puedes crear nuevos cambios de aceite")
+                            }
+
+                            Spacer(modifier = Modifier.height(16.dp))
+
+                            Button(
+                                onClick = { navController.navigate(Screen.MisSuscripciones.route) },
+                                modifier = Modifier.fillMaxWidth()
+                            ) {
+                                Text("Ver Mis Suscripciones")
+                            }
+                        }
+                    }
                 }
             }
         }

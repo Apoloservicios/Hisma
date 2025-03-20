@@ -30,6 +30,129 @@ class OilChangeManager(
     private val scope: CoroutineScope
 ) {
     /**
+     * Verifica si el lubricentro tiene una suscripción activa con cambios disponibles
+     */
+    suspend fun verificarSuscripcion(): Result<Map<String, Any>> {
+        return try {
+            val currentUser = auth.currentUser ?: return Result.failure(Exception("Usuario no autenticado"))
+
+            // Obtener suscripciones activas
+            val snapshot = db.collection("suscripciones")
+                .whereEqualTo("lubricentroId", currentUser.uid)
+                .whereEqualTo("estado", "activa")
+                .get()
+                .await()
+
+            if (snapshot.isEmpty) {
+                return Result.failure(Exception("No hay suscripciones activas"))
+            }
+
+            val suscripciones = snapshot.documents.mapNotNull { doc ->
+                val data = doc.data
+                if (data != null) {
+                    val id = doc.id
+                    val fechaFin = data["fechaFin"] as? com.google.firebase.Timestamp ?: com.google.firebase.Timestamp.now()
+                    val cambiosRestantes = (data["cambiosRestantes"] as? Long)?.toInt() ?: 0
+                    val isPaqueteAdicional = data["isPaqueteAdicional"] as? Boolean ?: false
+
+                    arrayOf(id, fechaFin, cambiosRestantes, isPaqueteAdicional)
+                } else null
+            }
+
+            // Verificar si hay suscripción principal activa y no vencida
+            val suscripcionPrincipal = suscripciones.firstOrNull { !(it[3] as Boolean) }
+            if (suscripcionPrincipal == null) {
+                return Result.failure(Exception("No hay suscripción principal activa"))
+            }
+
+            val hoy = com.google.firebase.Timestamp.now()
+            if ((suscripcionPrincipal[1] as com.google.firebase.Timestamp) < hoy) {
+                return Result.failure(Exception("La suscripción está vencida"))
+            }
+
+            // Calcular cambios disponibles (principal + adicionales)
+            val totalCambiosRestantes = suscripciones.sumOf { (it[2] as Int) }
+            if (totalCambiosRestantes <= 0) {
+                return Result.failure(Exception("No quedan cambios disponibles"))
+            }
+
+            // Calcular días restantes
+            val millisHastaVencimiento = (suscripcionPrincipal[1] as com.google.firebase.Timestamp).toDate().time - hoy.toDate().time
+            val diasRestantes = (millisHastaVencimiento / (1000 * 60 * 60 * 24)).toInt()
+
+            // Devolver información de suscripción
+            val result = mapOf(
+                "suscripcionActiva" to true,
+                "diasRestantes" to diasRestantes,
+                "cambiosRestantes" to totalCambiosRestantes,
+                "fechaVencimiento" to (suscripcionPrincipal[1] as com.google.firebase.Timestamp)
+            )
+
+            Result.success(result)
+        } catch (e: Exception) {
+            Result.failure(e)
+        }
+    }
+
+    /**
+     * Registra el uso de un cambio (decrementa contador)
+     */
+    private suspend fun registrarUsoCambio() {
+        try {
+            val currentUser = auth.currentUser ?: throw Exception("Usuario no autenticado")
+
+            // Obtener suscripciones activas ordenadas: primero paquetes adicionales, luego principal
+            val snapshot = db.collection("suscripciones")
+                .whereEqualTo("lubricentroId", currentUser.uid)
+                .whereEqualTo("estado", "activa")
+                .get()
+                .await()
+
+            val suscripciones = snapshot.documents.mapNotNull { doc ->
+                val data = doc.data
+                if (data != null) {
+                    val id = doc.id
+                    val cambiosRestantes = (data["cambiosRestantes"] as? Long)?.toInt() ?: 0
+                    val isPaqueteAdicional = data["isPaqueteAdicional"] as? Boolean ?: false
+
+                    Triple(id, cambiosRestantes, isPaqueteAdicional)
+                } else null
+            }
+
+            // Primero usar paquetes adicionales
+            val paqueteAdicional = suscripciones.firstOrNull { it.third && it.second > 0 }
+            if (paqueteAdicional != null) {
+                // Decrementar cambios en paquete adicional
+                db.collection("suscripciones").document(paqueteAdicional.first)
+                    .update(
+                        mapOf(
+                            "cambiosRealizados" to com.google.firebase.firestore.FieldValue.increment(1),
+                            "cambiosRestantes" to com.google.firebase.firestore.FieldValue.increment(-1L)
+                        )
+                    ).await()
+                return
+            }
+
+            // Si no hay paquetes adicionales, usar suscripción principal
+            val suscripcionPrincipal = suscripciones.firstOrNull { !it.third && it.second > 0 }
+            if (suscripcionPrincipal != null) {
+                db.collection("suscripciones").document(suscripcionPrincipal.first)
+                    .update(
+                        mapOf(
+                            "cambiosRealizados" to com.google.firebase.firestore.FieldValue.increment(1),
+                            "cambiosRestantes" to com.google.firebase.firestore.FieldValue.increment(-1L)
+                        )
+                    ).await()
+                return
+            }
+
+            throw Exception("No hay cambios disponibles")
+        } catch (e: Exception) {
+            Log.e(TAG, "Error al registrar uso de cambio", e)
+            throw e
+        }
+    }
+    /**
      * Carga todos los cambios de aceite del usuario actual
      */
     suspend fun loadOilChanges(): Result<List<OilChange>> {
@@ -73,48 +196,34 @@ class OilChangeManager(
     /**
      * Guarda un cambio de aceite (nuevo o actualización)
      */
-    /**
-     * Guarda un cambio de aceite (nuevo o actualización)
-     */
     suspend fun saveOilChange(oil: OilChange): Result<OilChange> {
         return try {
-            val currentUser =
-                auth.currentUser ?: return Result.failure(Exception("Usuario no autenticado"))
+            val currentUser = auth.currentUser ?: return Result.failure(Exception("Usuario no autenticado"))
 
-            // Si es un nuevo cambio (no actualización), verificar suscripción
+            // Si es un nuevo cambio, verificar suscripción y decrementar contador
             if (oil.id.isBlank()) {
-                // Obtener datos del lubricentro y su suscripción
-                val lubricentroDoc = db.collection("lubricentros")
-                    .document(currentUser.uid)
-                    .get()
-                    .await()
+                val subscriptionManager = SubscriptionManager(context, auth, db)
 
-                // Verificar si tiene suscripción y cambios disponibles
-                val subscriptionMap = lubricentroDoc.get("subscription") as? Map<*, *>
-                val isActive = subscriptionMap?.get("active") as? Boolean ?: false
-                val availableChanges = (subscriptionMap?.get("availableChanges") as? Number)?.toInt() ?: 0
-
-                if (!isActive) {
-                    return Result.failure(Exception("No tienes una suscripción activa para realizar cambios"))
+                // Verificar suscripción activa
+                val subscriptionResult = subscriptionManager.checkActiveSubscriptionSync()
+                if (subscriptionResult.isFailure) {
+                    return Result.failure(subscriptionResult.exceptionOrNull()
+                        ?: Exception("Error al verificar suscripción"))
                 }
 
-                if (availableChanges <= 0) {
-                    return Result.failure(Exception("Has agotado los cambios disponibles en tu plan actual"))
+                val subscription = subscriptionResult.getOrNull()
+                if (subscription == null || !subscription.active || !subscription.valid ||
+                    subscription.availableChanges <= 0) {
+                    return Result.failure(Exception("No hay una suscripción activa válida"))
                 }
 
-                // Descontar un cambio de aceite disponible
-                val changesUsed = (subscriptionMap?.get("changesUsed") as? Number)?.toInt() ?: 0
-
-                db.collection("lubricentros")
-                    .document(currentUser.uid)
-                    .update(
-                        "subscription.availableChanges", availableChanges - 1,
-                        "subscription.changesUsed", changesUsed + 1
-                    )
-                    .await()
+                // Registrar uso del cambio
+                val changeRegistered = subscriptionManager.registerChangeUsageSync()
+                if (!changeRegistered) {
+                    return Result.failure(Exception("Error al registrar el uso del cambio"))
+                }
             }
 
-            // Continuar con el guardado normal del cambio de aceite
             val docRef = if (oil.id.isBlank()) {
                 db.collection("lubricentros")
                     .document(currentUser.uid)
@@ -141,9 +250,6 @@ class OilChangeManager(
         }
     }
 
-    /**
-     * Elimina un cambio de aceite
-     */
     suspend fun deleteOilChange(oilId: String): Result<Unit> {
         return try {
             val currentUser =

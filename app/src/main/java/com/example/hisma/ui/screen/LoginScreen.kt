@@ -104,17 +104,17 @@ fun LoginScreen(navController: NavController) {
                                             if (subscription == null) {
                                                 // El usuario no tiene suscripción, activar el período de prueba
                                                 val subscriptionManager = SubscriptionManager(context, auth, db)
-                                                val trialActivated = subscriptionManager.activateTrial()
-
-                                                if (trialActivated) {
-                                                    // Período de prueba activado correctamente
-                                                    isLoading = false
-                                                    navController.navigate(Screen.HomeOwner.route) {
-                                                        popUpTo(Screen.Login.route) { inclusive = true }
+                                                subscriptionManager.activateTrial { success ->
+                                                    if (success) {
+                                                        // Período de prueba activado correctamente
+                                                        isLoading = false
+                                                        navController.navigate(Screen.HomeOwner.route) {
+                                                            popUpTo(Screen.Login.route) { inclusive = true }
+                                                        }
+                                                    } else {
+                                                        isLoading = false
+                                                        errorMessage = "No se pudo activar el período de prueba. Contacta con soporte."
                                                     }
-                                                } else {
-                                                    isLoading = false
-                                                    errorMessage = "No se pudo activar el período de prueba. Contacta con soporte."
                                                 }
                                             } else if (subscription.active) {  // CAMBIADO: verificar solo active primero
                                                 // La suscripción está marcada como activa

@@ -21,6 +21,7 @@ import com.example.hisma.model.OilChange
 import com.example.hisma.ui.dialogs.AddEditOilChangeDialog
 import com.example.hisma.ui.components.OilChangeCard
 import com.example.hisma.utils.OilChangeManager
+import com.example.hisma.utils.SubscriptionManager
 import com.google.firebase.Timestamp
 import com.google.firebase.auth.FirebaseAuth
 import com.google.firebase.firestore.FirebaseFirestore
@@ -34,6 +35,11 @@ fun OilChangesListScreen(navController: NavController) {
     val db = remember { FirebaseFirestore.getInstance() }
     val scope = rememberCoroutineScope()
     val oilChangeManager = remember { OilChangeManager(context, auth, db, scope) }
+
+    var suscripcionActiva by remember { mutableStateOf(false) }
+    var cambiosRestantes by remember { mutableStateOf(0) }
+    var cargandoSuscripcion by remember { mutableStateOf(true) }
+    var errorSuscripcion by remember { mutableStateOf<String?>(null) }
 
     // Estados de la UI
     var searchQuery by remember { mutableStateOf("") }
@@ -51,6 +57,25 @@ fun OilChangesListScreen(navController: NavController) {
             nextTicketNumber = oilChangeManager.calculateNextTicketNumber(oilChanges)
         }
         isLoading = false
+    }
+
+    // Después de cargar cambios
+// Verificar estado de suscripción
+    val subscriptionManager = SubscriptionManager(context)
+    subscriptionManager.checkActiveSubscription { result ->
+        if (result.isSuccess) {
+            val subscription = result.getOrNull()
+            if (subscription != null) {
+                suscripcionActiva = subscription.active && subscription.valid
+                cambiosRestantes = subscription.availableChanges
+            } else {
+                suscripcionActiva = false
+            }
+        } else {
+            suscripcionActiva = false
+            errorSuscripcion = result.exceptionOrNull()?.message
+        }
+        cargandoSuscripcion = false
     }
 
     // Filtrar por dominio
@@ -71,8 +96,16 @@ fun OilChangesListScreen(navController: NavController) {
         },
         floatingActionButton = {
             FloatingActionButton(onClick = {
-                selectedChange = null
-                showDialog = true
+                if (suscripcionActiva && cambiosRestantes > 0) {
+                    selectedChange = null
+                    showDialog = true
+                } else {
+                    Toast.makeText(
+                        context,
+                        "No puedes crear nuevos cambios. Verifica tu suscripción.",
+                        Toast.LENGTH_LONG
+                    ).show()
+                }
             }) {
                 Icon(Icons.Default.Add, contentDescription = "Agregar")
             }

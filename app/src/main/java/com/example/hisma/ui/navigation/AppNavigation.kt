@@ -15,6 +15,7 @@ import com.example.hisma.ui.screen.ReportsScreen
 import com.example.hisma.ui.screen.OilChangesListScreen
 import com.example.hisma.ui.screen.RegisterEmployeeScreen
 import com.example.hisma.ui.screen.HomeEmployeeScreen
+import com.example.hisma.ui.screen.MisSuscripcionesScreen
 
 
 // etc.
@@ -34,6 +35,7 @@ sealed class Screen(val route: String) {
     object Reports : Screen("reports_screen")
     object OilChangesList : Screen("oil_changes_list_screen")
     object RegisterEmployee : Screen("register_employee")
+    object MisSuscripciones : Screen("mis_suscripciones_screen")
 
 
 
@@ -86,6 +88,9 @@ fun AppNavigation() {
 
         composable(Screen.HomeEmployee.route) {
             HomeEmployeeScreen(navController)
+        }
+        composable(Screen.MisSuscripciones.route) {
+            MisSuscripcionesScreen(navController)
         }
 
     }
