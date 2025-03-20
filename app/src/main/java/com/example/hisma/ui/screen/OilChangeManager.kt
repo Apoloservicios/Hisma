@@ -196,30 +196,50 @@ class OilChangeManager(
     /**
      * Guarda un cambio de aceite (nuevo o actualización)
      */
+    /**
+     * Guarda un cambio de aceite (nuevo o actualización)
+     */
     suspend fun saveOilChange(oil: OilChange): Result<OilChange> {
         return try {
             val currentUser = auth.currentUser ?: return Result.failure(Exception("Usuario no autenticado"))
 
             // Si es un nuevo cambio, verificar suscripción y decrementar contador
             if (oil.id.isBlank()) {
+                // Verificar suscripción activa
+                var isSubscriptionValid = false
+                var isChangeRegistered = false
+
                 val subscriptionManager = SubscriptionManager(context, auth, db)
 
-                // Verificar suscripción activa
-                val subscriptionResult = subscriptionManager.checkActiveSubscriptionSync()
-                if (subscriptionResult.isFailure) {
-                    return Result.failure(subscriptionResult.exceptionOrNull()
-                        ?: Exception("Error al verificar suscripción"))
+                // Verificar suscripción activa (esperar resultado)
+                var checkComplete = false
+                subscriptionManager.checkActiveSubscription { isActive, subscription ->
+                    isSubscriptionValid = isActive && (subscription?.availableChanges ?: 0) > 0
+                    checkComplete = true
                 }
 
-                val subscription = subscriptionResult.getOrNull()
-                if (subscription == null || !subscription.active || !subscription.valid ||
-                    subscription.availableChanges <= 0) {
-                    return Result.failure(Exception("No hay una suscripción activa válida"))
+                // Esperar a que se complete la verificación (simple polling)
+                while (!checkComplete) {
+                    kotlinx.coroutines.delay(50)
                 }
 
-                // Registrar uso del cambio
-                val changeRegistered = subscriptionManager.registerChangeUsageSync()
-                if (!changeRegistered) {
+                if (!isSubscriptionValid) {
+                    return Result.failure(Exception("No hay una suscripción activa válida o no quedan cambios disponibles"))
+                }
+
+                // Registrar uso del cambio (esperar resultado)
+                var registerComplete = false
+                subscriptionManager.registerChangeUsage { success ->
+                    isChangeRegistered = success
+                    registerComplete = true
+                }
+
+                // Esperar a que se complete el registro
+                while (!registerComplete) {
+                    kotlinx.coroutines.delay(50)
+                }
+
+                if (!isChangeRegistered) {
                     return Result.failure(Exception("Error al registrar el uso del cambio"))
                 }
             }

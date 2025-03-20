@@ -41,16 +41,9 @@ fun MisSuscripcionesScreen(navController: NavController) {
 
     LaunchedEffect(Unit) {
         // Cargar suscripciones
-        subscriptionManager.getAllSubscriptions { result ->
-            if (result.isSuccess) {
-                subscriptions = result.getOrNull() ?: emptyList()
-            } else {
-                Toast.makeText(
-                    context,
-                    "Error cargando suscripciones: ${result.exceptionOrNull()?.message}",
-                    Toast.LENGTH_SHORT
-                ).show()
-            }
+        // Cargar suscripciones
+        subscriptionManager.getAllSubscriptions { subscriptionsList ->
+            subscriptions = subscriptionsList
             isLoading = false
         }
     }

@@ -59,22 +59,16 @@ fun OilChangesListScreen(navController: NavController) {
         isLoading = false
     }
 
-    // Después de cargar cambios
-// Verificar estado de suscripción
+    // Verificar estado de suscripción
     val subscriptionManager = SubscriptionManager(context)
-    subscriptionManager.checkActiveSubscription { result ->
-        if (result.isSuccess) {
-            val subscription = result.getOrNull()
-            if (subscription != null) {
-                suscripcionActiva = subscription.active && subscription.valid
-                cambiosRestantes = subscription.availableChanges
-            } else {
-                suscripcionActiva = false
-            }
-        } else {
-            suscripcionActiva = false
-            errorSuscripcion = result.exceptionOrNull()?.message
+    subscriptionManager.checkActiveSubscription { isActive, subscription ->
+        suscripcionActiva = isActive
+        cambiosRestantes = if (isActive && subscription != null) subscription.availableChanges else 0
+
+        if (!isActive) {
+            errorSuscripcion = "No hay una suscripción activa válida"
         }
+
         cargandoSuscripcion = false
     }
 

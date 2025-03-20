@@ -1,6 +1,5 @@
 package com.example.hisma.ui.screen
 
-import android.util.Log
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
@@ -20,15 +19,16 @@ import com.google.firebase.auth.FirebaseAuth
 import com.google.firebase.firestore.FirebaseFirestore
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.tasks.await
+import android.util.Log
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun RegisterScreen(navController: NavController) {
+    val context = LocalContext.current
     val auth = FirebaseAuth.getInstance()
     val db = FirebaseFirestore.getInstance()
     val scope = rememberCoroutineScope()
     val focusManager = LocalFocusManager.current
-    val context = LocalContext.current  // Añadido para resolver el error
 
     // Campos de registro
     var nombreFantasia by remember { mutableStateOf("") }
@@ -55,7 +55,97 @@ fun RegisterScreen(navController: NavController) {
             modifier = Modifier.align(Alignment.CenterHorizontally)
         )
 
-        // ... (resto del código de campos de texto)
+        Spacer(modifier = Modifier.height(16.dp))
+
+        OutlinedTextField(
+            value = nombreFantasia,
+            onValueChange = { nombreFantasia = it },
+            label = { Text("Nombre de Fantasía") },
+            modifier = Modifier.fillMaxWidth(),
+            singleLine = true,
+            keyboardActions = KeyboardActions(onDone = { focusManager.clearFocus() })
+        )
+
+        Spacer(modifier = Modifier.height(8.dp))
+
+        OutlinedTextField(
+            value = responsable,
+            onValueChange = { responsable = it },
+            label = { Text("Responsable") },
+            modifier = Modifier.fillMaxWidth(),
+            singleLine = true,
+            keyboardActions = KeyboardActions(onDone = { focusManager.clearFocus() })
+        )
+
+        Spacer(modifier = Modifier.height(8.dp))
+
+        OutlinedTextField(
+            value = cuit,
+            onValueChange = { cuit = it },
+            label = { Text("CUIT") },
+            modifier = Modifier.fillMaxWidth(),
+            singleLine = true,
+            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number)
+        )
+
+        Spacer(modifier = Modifier.height(8.dp))
+
+        OutlinedTextField(
+            value = direccion,
+            onValueChange = { direccion = it },
+            label = { Text("Dirección") },
+            modifier = Modifier.fillMaxWidth(),
+            singleLine = true,
+            keyboardActions = KeyboardActions(onDone = { focusManager.clearFocus() })
+        )
+
+        Spacer(modifier = Modifier.height(8.dp))
+
+        OutlinedTextField(
+            value = telefono,
+            onValueChange = { telefono = it },
+            label = { Text("Teléfono") },
+            modifier = Modifier.fillMaxWidth(),
+            singleLine = true,
+            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Phone)
+        )
+
+        Spacer(modifier = Modifier.height(8.dp))
+
+        OutlinedTextField(
+            value = email,
+            onValueChange = { email = it },
+            label = { Text("Email") },
+            modifier = Modifier.fillMaxWidth(),
+            singleLine = true,
+            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Email)
+        )
+
+        Spacer(modifier = Modifier.height(8.dp))
+
+        OutlinedTextField(
+            value = password,
+            onValueChange = { password = it },
+            label = { Text("Contraseña") },
+            modifier = Modifier.fillMaxWidth(),
+            singleLine = true,
+            visualTransformation = PasswordVisualTransformation(),
+            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password)
+        )
+
+        Spacer(modifier = Modifier.height(8.dp))
+
+        OutlinedTextField(
+            value = confirmPassword,
+            onValueChange = { confirmPassword = it },
+            label = { Text("Confirmar Contraseña") },
+            modifier = Modifier.fillMaxWidth(),
+            singleLine = true,
+            visualTransformation = PasswordVisualTransformation(),
+            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password)
+        )
+
+        Spacer(modifier = Modifier.height(16.dp))
 
         Button(
             onClick = {
@@ -97,15 +187,16 @@ fun RegisterScreen(navController: NavController) {
                                 "direccion" to direccion,
                                 "telefono" to telefono,
                                 "email" to email,
-                                "trialUsed" to false // Para saber si ya usó la prueba
+                                "trialUsed" to false // Añadimos este campo para controlar si ha usado prueba
                             )
                             db.collection("lubricentros").document(uid).set(lubricentroData).await()
 
                             // Crear suscripción de prueba
                             val subscriptionManager = SubscriptionManager(context, auth, db)
-                            val trialResult = subscriptionManager.createTrial(uid)
-                            if (trialResult.isFailure) {
-                                Log.e("RegisterScreen", "Error al crear suscripción de prueba: ${trialResult.exceptionOrNull()?.message}")
+                            val trialCreated = subscriptionManager.createTrial(uid)
+
+                            if (!trialCreated) {
+                                Log.e("RegisterScreen", "No se pudo crear la suscripción de prueba")
                             }
 
                             isLoading = false
@@ -132,6 +223,26 @@ fun RegisterScreen(navController: NavController) {
             }
         }
 
-        // ... (resto del código)
+        Spacer(modifier = Modifier.height(8.dp))
+
+        errorMessage?.let {
+            Text(text = it, color = MaterialTheme.colorScheme.error)
+        }
+
+        Spacer(modifier = Modifier.height(16.dp))
+
+        // Enlace a "Olvidé mi contraseña"
+        TextButton(onClick = {
+            navController.navigate(Screen.ForgotPassword.route)
+        }) {
+            Text("¿Olvidaste tu contraseña?")
+        }
+
+        Spacer(modifier = Modifier.height(8.dp))
+
+        // Enlace para regresar al Login
+        TextButton(onClick = { navController.navigateUp() }) {
+            Text("¿Ya tienes cuenta? Inicia sesión")
+        }
     }
 }

@@ -2,21 +2,24 @@ package com.example.hisma.model
 
 import com.google.firebase.Timestamp
 
-data class Suscription(
+data class Subscription(
     val id: String = "",
     val lubricentroId: String = "",
     val planId: String = "",
-    val fechaInicio: Timestamp = Timestamp.now(),
-    val fechaFin: Timestamp = Timestamp.now(),
-    var estado: String = "activa", // "activa", "pendiente", "cancelada"
-    val cambiosTotales: Int = 100,
-    val cambiosRealizados: Int = 0,
-    val cambiosRestantes: Int = 100,
+    val startDate: Timestamp = Timestamp.now(),
+    val endDate: Timestamp = Timestamp.now(),
+    val active: Boolean = true,
+    val valid: Boolean = true,
+    val totalChangesAllowed: Int = 100,
+    val changesUsed: Int = 0,
+    val availableChanges: Int = 100,
+    val trialActivated: Boolean = false,
     val isPaqueteAdicional: Boolean = false,
-    val createdAt: Timestamp = Timestamp.now()
+    val createdAt: Timestamp = Timestamp.now(),
+    val updatedAt: Timestamp = Timestamp.now()
 ) {
-    fun isValid(): Boolean {
+    fun calculateIsValid(): Boolean {
         val now = Timestamp.now()
-        return estado == "activa" && fechaFin > now && cambiosRestantes > 0
+        return active && endDate > now && availableChanges > 0
     }
 }

@@ -54,14 +54,6 @@ fun OilChangeCard(
                         style = MaterialTheme.typography.bodyMedium)
                     Text("KM: ${oilChange.km}  PRÓX: ${oilChange.proxKm}",
                         style = MaterialTheme.typography.bodyMedium)
-
-                    // Mostrar próxima fecha si está disponible
-                    if (oilChange.proximaFecha.isNotBlank()) {
-                        Text("PRÓXIMO CAMBIO: ${oilChange.proximaFecha}",
-                            style = MaterialTheme.typography.bodyMedium,
-                            color = Color(0xFF4CAF50))
-                    }
-
                     if (oilChange.contactName.isNotBlank()) {
                         Text("CONTACTO: ${oilChange.contactName}",
                             style = MaterialTheme.typography.bodyMedium)
