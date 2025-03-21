@@ -12,6 +12,7 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
 import androidx.navigation.NavController
 import com.example.hisma.ui.navigation.Screen
+import com.example.hisma.utils.OilChangeManager
 import com.example.hisma.utils.SubscriptionManager
 import com.google.firebase.auth.FirebaseAuth
 import com.google.firebase.firestore.FirebaseFirestore
@@ -36,6 +37,9 @@ fun HomeOwnerScreen(navController: NavController) {
     var fechaVencimiento by remember { mutableStateOf("") }
     var isLoadingSuscripcion by remember { mutableStateOf(true) }
 
+
+    // En HomeOwnerScreen.kt, en LaunchedEffect:
+
     LaunchedEffect(Unit) {
         try {
             val currentUser = auth.currentUser
@@ -48,7 +52,7 @@ fun HomeOwnerScreen(navController: NavController) {
 
                 isLoading = false
 
-                // Cargar información de suscripción
+                // Usar el SubscriptionManager actualizado
                 val subscriptionManager = SubscriptionManager(context, auth, db)
                 subscriptionManager.checkActiveSubscription { isActive, subscription ->
                     suscripcionActiva = isActive

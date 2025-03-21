@@ -24,16 +24,14 @@ class SubscriptionManager(
     private val scope = CoroutineScope(Dispatchers.IO)
     private val TAG = "SubscriptionManager"
 
-    // Método actualizado para verificar suscripción con callback simple
     fun checkActiveSubscription(callback: (Boolean, Subscription?) -> Unit) {
         scope.launch {
             try {
                 val currentUser = auth.currentUser ?: throw Exception("Usuario no autenticado")
 
-                // Consultar suscripciones activas
+                // Consultar suscripciones activas (verifica tanto "estado" como "activa")
                 val snapshot = db.collection("suscripciones")
                     .whereEqualTo("lubricentroId", currentUser.uid)
-                    .whereEqualTo("estado", "activa")
                     .get()
                     .await()
 
@@ -47,13 +45,22 @@ class SubscriptionManager(
                 // Mapear documentos a objetos Subscription
                 val subscriptions = snapshot.documents.mapNotNull { doc ->
                     try {
+                        // Verifica ambos estados posibles
+                        val active = when {
+                            doc.getString("estado") == "activa" -> true
+                            doc.getBoolean("activa") == true -> true
+                            else -> false
+                        }
+
+                        if (!active) return@mapNotNull null
+
                         Subscription(
                             id = doc.id,
                             lubricentroId = doc.getString("lubricentroId") ?: "",
                             planId = doc.getString("planId") ?: "",
                             startDate = doc.getTimestamp("fechaInicio") ?: Timestamp.now(),
                             endDate = doc.getTimestamp("fechaFin") ?: Timestamp.now(),
-                            active = doc.getString("estado") == "activa",
+                            active = active,
                             valid = true,
                             totalChangesAllowed = doc.getLong("cambiosTotales")?.toInt() ?: 0,
                             changesUsed = doc.getLong("cambiosRealizados")?.toInt() ?: 0,
@@ -61,6 +68,7 @@ class SubscriptionManager(
                             isPaqueteAdicional = doc.getBoolean("isPaqueteAdicional") ?: false
                         )
                     } catch (e: Exception) {
+                        Log.e(TAG, "Error mapeando suscripción: ${e.message}", e)
                         null
                     }
                 }

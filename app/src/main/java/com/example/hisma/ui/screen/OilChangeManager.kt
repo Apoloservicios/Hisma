@@ -639,6 +639,37 @@ class OilChangeManager(
             Log.d(TAG, "Número formateado para WhatsApp: $it")
         }
     }
+    suspend fun verificarSuscripcionActiva(lubricentroId: String = auth.currentUser?.uid ?: ""): Boolean {
+        return try {
+            // Primero comprobamos en la colección de suscripciones
+            val query = db.collection("suscripciones")
+                .whereEqualTo("lubricentroId", lubricentroId)
+                .whereEqualTo("activa", true)
+                .get()
+                .await()
+
+            if (!query.isEmpty) {
+                Log.d(TAG, "Suscripción activa encontrada en colección suscripciones")
+                return true
+            }
+
+            // Como respaldo, verificamos el campo subscription dentro del documento lubricentro
+            val lubDoc = db.collection("lubricentros")
+                .document(lubricentroId)
+                .get()
+                .await()
+
+            val subscription = lubDoc.get("subscription") as? Map<String, Any>
+            val suscripcionActiva = subscription?.get("suscripcionActiva") as? Boolean ?: false
+
+            Log.d(TAG, "Estado de suscripción desde campo subscription: $suscripcionActiva")
+            suscripcionActiva
+
+        } catch (e: Exception) {
+            Log.e(TAG, "Error al verificar suscripción: ${e.message}", e)
+            false
+        }
+    }
 
     companion object {
         private const val TAG = "OilChangeManager"
