@@ -26,6 +26,9 @@ import com.google.firebase.Timestamp
 import com.google.firebase.auth.FirebaseAuth
 import com.google.firebase.firestore.FirebaseFirestore
 import kotlinx.coroutines.launch
+import androidx.compose.ui.platform.LocalLifecycleOwner
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.LifecycleEventObserver
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -49,19 +52,38 @@ fun OilChangesListScreen(navController: NavController) {
     var selectedChange by remember { mutableStateOf<OilChange?>(null) }
     var nextTicketNumber by remember { mutableStateOf("L-00001") }
 
-    // Cargar la lista al iniciar
     LaunchedEffect(Unit) {
+        Log.d("OilChangesListScreen", "Iniciando carga de cambios de aceite")
         val result = oilChangeManager.loadOilChanges()
+        Log.d("OilChangesListScreen", "Resultado de loadOilChanges: ${result.isSuccess}")
+
         if (result.isSuccess) {
-            oilChanges = result.getOrDefault(emptyList())
+            val list = result.getOrDefault(emptyList())
+            Log.d("OilChangesListScreen", "Cambios cargados: ${list.size}")
+            oilChanges = list
             nextTicketNumber = oilChangeManager.calculateNextTicketNumber(oilChanges)
+        } else {
+            Log.e("OilChangesListScreen", "Error cargando cambios: ${result.exceptionOrNull()?.message}")
+            // Si hay error, probar con datos de prueba temporales
+            oilChanges = listOf(
+                OilChange(
+                    id = "test1",
+                    dominio = "ABC123",
+                    fecha = "01/01/2025",
+                    km = "10000",
+                    proxKm = "15000",
+                    ticketNumber = "L-00001",
+                    createdAt = Timestamp.now()
+                )
+            )
         }
         isLoading = false
     }
 
     // Verificar estado de suscripción
-    val subscriptionManager = SubscriptionManager(context)
+    val subscriptionManager = SubscriptionManager(context, auth, db)
     subscriptionManager.checkActiveSubscription { isActive, subscription ->
+        Log.d("OilChangesListScreen", "checkActiveSubscription result: isActive=$isActive, subscription=$subscription")
         suscripcionActiva = isActive
         cambiosRestantes = if (isActive && subscription != null) subscription.availableChanges else 0
 
@@ -75,6 +97,35 @@ fun OilChangesListScreen(navController: NavController) {
     // Filtrar por dominio
     val filteredOilChanges = oilChanges.filter {
         it.dominio.contains(searchQuery, ignoreCase = true)
+    }
+    // Agregar un estado para controlar si la pantalla está activa
+    val lifeCycleOwner = LocalLifecycleOwner.current
+    var isActive by remember { mutableStateOf(true) }
+
+    // Observar el ciclo de vida para saber cuándo la pantalla está activa
+    DisposableEffect(lifeCycleOwner) {
+        val observer = LifecycleEventObserver { _, event ->
+            if (event == Lifecycle.Event.ON_RESUME) {
+                isActive = true
+                // Recargar datos cuando la pantalla vuelve a estar activa
+                scope.launch {
+                    val result = oilChangeManager.loadOilChanges()
+                    if (result.isSuccess) {
+                        oilChanges = result.getOrDefault(emptyList())
+                        nextTicketNumber = oilChangeManager.calculateNextTicketNumber(oilChanges)
+                    }
+                    isLoading = false
+                }
+            } else if (event == Lifecycle.Event.ON_PAUSE) {
+                isActive = false
+            }
+        }
+
+        lifeCycleOwner.lifecycle.addObserver(observer)
+
+        onDispose {
+            lifeCycleOwner.lifecycle.removeObserver(observer)
+        }
     }
 
     Scaffold(

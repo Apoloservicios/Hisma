@@ -9,6 +9,7 @@ import android.widget.Toast
 import androidx.core.content.FileProvider
 import com.example.hisma.model.Lubricentro
 import com.example.hisma.model.OilChange
+import com.google.firebase.Timestamp
 import com.google.firebase.auth.FirebaseAuth
 import com.google.firebase.firestore.FirebaseFirestore
 import com.google.firebase.firestore.Query
@@ -160,6 +161,8 @@ class OilChangeManager(
             val currentUser =
                 auth.currentUser ?: return Result.failure(Exception("Usuario no autenticado"))
 
+            Log.d(TAG, "Cargando cambios de aceite para usuario: ${currentUser.uid}")
+
             val snapshot = db.collection("lubricentros")
                 .document(currentUser.uid)
                 .collection("cambiosAceite")
@@ -167,20 +170,31 @@ class OilChangeManager(
                 .get()
                 .await()
 
-            val list = snapshot.documents.map { doc ->
-                doc.toObject(OilChange::class.java)!!.copy(id = doc.id)
+            Log.d(TAG, "Documentos encontrados: ${snapshot.documents.size}")
+
+            if (snapshot.isEmpty) {
+                Log.d(TAG, "No se encontraron cambios de aceite")
+                return Result.success(emptyList())
             }
 
+            val list = snapshot.documents.mapNotNull { doc ->
+                try {
+                    Log.d(TAG, "Procesando documento: ${doc.id}")
+                    doc.toObject(OilChange::class.java)?.copy(id = doc.id)
+                } catch (e: Exception) {
+                    Log.e(TAG, "Error al procesar documento ${doc.id}: ${e.message}")
+                    null
+                }
+            }
+
+            Log.d(TAG, "Cambios de aceite cargados con éxito: ${list.size}")
             Result.success(list)
         } catch (e: Exception) {
-            Log.e(TAG, "Error al cargar lista de cambios de aceite", e)
+            Log.e(TAG, "Error al cargar lista de cambios de aceite: ${e.message}", e)
             Result.failure(e)
         }
     }
 
-    /**
-     * Calcula el siguiente número de ticket basado en la lista actual
-     */
     fun calculateNextTicketNumber(oilChanges: List<OilChange>): String {
         return if (oilChanges.isNotEmpty()) {
             val ticketNumbers = oilChanges.mapNotNull {
@@ -193,57 +207,52 @@ class OilChangeManager(
         }
     }
 
-    /**
-     * Guarda un cambio de aceite (nuevo o actualización)
-     */
-    /**
-     * Guarda un cambio de aceite (nuevo o actualización)
-     */
     suspend fun saveOilChange(oil: OilChange): Result<OilChange> {
         return try {
-            val currentUser = auth.currentUser ?: return Result.failure(Exception("Usuario no autenticado"))
+            val currentUser = auth.currentUser ?:
+            return Result.failure(Exception("Usuario no autenticado"))
 
-            // Si es un nuevo cambio, verificar suscripción y decrementar contador
+            // Solo para nuevos cambios (no actualizaciones)
             if (oil.id.isBlank()) {
-                // Verificar suscripción activa
-                var isSubscriptionValid = false
-                var isChangeRegistered = false
+                // Verificar si hay suscripciones activas con cambios disponibles
+                val subscriptionsQuery = db.collection("suscripciones")
+                    .whereEqualTo("lubricentroId", currentUser.uid)
+                    .whereEqualTo("estado", "activa")
+                    .get()
+                    .await()
 
-                val subscriptionManager = SubscriptionManager(context, auth, db)
-
-                // Verificar suscripción activa (esperar resultado)
-                var checkComplete = false
-                subscriptionManager.checkActiveSubscription { isActive, subscription ->
-                    isSubscriptionValid = isActive && (subscription?.availableChanges ?: 0) > 0
-                    checkComplete = true
+                if (subscriptionsQuery.isEmpty) {
+                    return Result.failure(Exception("No hay suscripciones activas"))
                 }
 
-                // Esperar a que se complete la verificación (simple polling)
-                while (!checkComplete) {
-                    kotlinx.coroutines.delay(50)
+                // Verificar si hay cambios disponibles
+                val subscriptions = subscriptionsQuery.documents.mapNotNull {
+                    val cambiosRestantes = it.getLong("cambiosRestantes")?.toInt() ?: 0
+                    if (cambiosRestantes > 0) Triple(it.id, it.getString("tipo") ?: "principal", cambiosRestantes)
+                    else null
                 }
 
-                if (!isSubscriptionValid) {
-                    return Result.failure(Exception("No hay una suscripción activa válida o no quedan cambios disponibles"))
+                if (subscriptions.isEmpty()) {
+                    return Result.failure(Exception("No hay cambios disponibles"))
                 }
 
-                // Registrar uso del cambio (esperar resultado)
-                var registerComplete = false
-                subscriptionManager.registerChangeUsage { success ->
-                    isChangeRegistered = success
-                    registerComplete = true
+                // Ordenar: primero adicionales, luego principales
+                val sortedSubscriptions = subscriptions.sortedBy {
+                    if (it.second == "adicional") 0 else 1
                 }
 
-                // Esperar a que se complete el registro
-                while (!registerComplete) {
-                    kotlinx.coroutines.delay(50)
-                }
-
-                if (!isChangeRegistered) {
-                    return Result.failure(Exception("Error al registrar el uso del cambio"))
-                }
+                // Decrementar cambio
+                db.collection("suscripciones")
+                    .document(sortedSubscriptions.first().first)
+                    .update(
+                        "cambiosRestantes", com.google.firebase.firestore.FieldValue.increment(-1),
+                        "cambiosUsados", com.google.firebase.firestore.FieldValue.increment(1),
+                        "updatedAt", Timestamp.now()
+                    )
+                    .await()
             }
 
+            // Guardar cambio de aceite (el código que ya tenías)
             val docRef = if (oil.id.isBlank()) {
                 db.collection("lubricentros")
                     .document(currentUser.uid)
@@ -257,15 +266,12 @@ class OilChangeManager(
             }
 
             docRef.set(oil).await()
-            val savedOil = if (oil.id.isBlank()) {
-                oil.copy(id = docRef.id)
-            } else {
-                oil
-            }
 
-            Result.success(savedOil)
+            Result.success(
+                if (oil.id.isBlank()) oil.copy(id = docRef.id) else oil
+            )
         } catch (e: Exception) {
-            Log.e(TAG, "Error al guardar cambio de aceite", e)
+            Log.e(TAG, "Error guardando cambio de aceite: ${e.message}")
             Result.failure(e)
         }
     }

@@ -24,25 +24,29 @@ class SubscriptionManager(
     private val scope = CoroutineScope(Dispatchers.IO)
     private val TAG = "SubscriptionManager"
 
+    // Función checkActiveSubscription - Línea 20-50
     fun checkActiveSubscription(callback: (Boolean, Subscription?) -> Unit) {
         scope.launch {
             try {
                 val currentUser = auth.currentUser ?: throw Exception("Usuario no autenticado")
+                Log.d(TAG, "Verificando suscripción para: ${currentUser.uid}")
 
-                // Consultar suscripciones activas (verifica tanto "estado" como "activa")
+                // Primero, intentar obtener suscripciones desde la colección
                 val snapshot = db.collection("suscripciones")
                     .whereEqualTo("lubricentroId", currentUser.uid)
                     .get()
                     .await()
 
-                if (snapshot.isEmpty) {
-                    withContext(Dispatchers.Main) {
-                        callback(false, null)
-                    }
-                    return@launch
+                Log.d(TAG, "Suscripciones encontradas: ${snapshot.documents.size}")
+
+                // Depurar los documentos encontrados
+                snapshot.documents.forEach { doc ->
+                    Log.d(TAG, "Documento suscripción: ${doc.id}")
+                    Log.d(TAG, "Estado: ${doc.getString("estado")}, Activa: ${doc.getBoolean("activa")}")
+                    Log.d(TAG, "Cambios restantes: ${doc.getLong("cambiosRestantes")}")
                 }
 
-                // Mapear documentos a objetos Subscription
+                // Mapear documentos a objetos Subscription, filtrando los inactivos
                 val subscriptions = snapshot.documents.mapNotNull { doc ->
                     try {
                         // Verifica ambos estados posibles
@@ -52,7 +56,13 @@ class SubscriptionManager(
                             else -> false
                         }
 
-                        if (!active) return@mapNotNull null
+                        if (!active) {
+                            Log.d(TAG, "Documento ${doc.id} no está activo")
+                            return@mapNotNull null
+                        }
+
+                        val cambiosRestantes = doc.getLong("cambiosRestantes")?.toInt() ?: 0
+                        Log.d(TAG, "Documento ${doc.id} está activo, tiene ${cambiosRestantes} cambios restantes")
 
                         Subscription(
                             id = doc.id,
@@ -64,7 +74,7 @@ class SubscriptionManager(
                             valid = true,
                             totalChangesAllowed = doc.getLong("cambiosTotales")?.toInt() ?: 0,
                             changesUsed = doc.getLong("cambiosRealizados")?.toInt() ?: 0,
-                            availableChanges = doc.getLong("cambiosRestantes")?.toInt() ?: 0,
+                            availableChanges = cambiosRestantes,
                             isPaqueteAdicional = doc.getBoolean("isPaqueteAdicional") ?: false
                         )
                     } catch (e: Exception) {
@@ -73,16 +83,63 @@ class SubscriptionManager(
                     }
                 }
 
+                // Si no hay suscripciones en la colección, verificar el campo subscription del lubricentro
+                if (subscriptions.isEmpty()) {
+                    Log.d(TAG, "No se encontraron suscripciones activas en la colección, verificando el documento lubricentro")
+                    val lubDoc = db.collection("lubricentros")
+                        .document(currentUser.uid)
+                        .get()
+                        .await()
+
+                    val subscription = lubDoc.get("subscription") as? Map<String, Any>
+                    if (subscription != null) {
+                        Log.d(TAG, "Encontrado campo subscription: ${subscription}")
+                        val active = subscription["active"] as? Boolean ?: false
+                        val suscripcionActiva = subscription["suscripcionActiva"] as? Boolean ?: false
+
+                        if (active || suscripcionActiva) {
+                            // Crear objeto Subscription desde los datos del documento lubricentro
+                            val availableChanges = (subscription["availableChanges"] as? Number)?.toInt() ?: 0
+                            val totalChangesAllowed = (subscription["totalChangesAllowed"] as? Number)?.toInt() ?: 0
+                            val changesUsed = (subscription["changesUsed"] as? Number)?.toInt() ?: 0
+                            Log.d(TAG, "Subscription es activa, cambios: $availableChanges")
+
+                            val sub = Subscription(
+                                id = "embedded",
+                                lubricentroId = currentUser.uid,
+                                planId = (subscription["plan"] as? String) ?: "unknown",
+                                startDate = (subscription["startDate"] as? Timestamp) ?: Timestamp.now(),
+                                endDate = (subscription["endDate"] as? Timestamp) ?: Timestamp.now(),
+                                active = true,
+                                valid = true,
+                                totalChangesAllowed = totalChangesAllowed,
+                                changesUsed = changesUsed,
+                                availableChanges = availableChanges,
+                                isPaqueteAdicional = false
+                            )
+
+                            withContext(Dispatchers.Main) {
+                                callback(true, sub)
+                            }
+                            return@launch
+                        }
+                    }
+                }
+
                 val validSubscriptions = subscriptions.filter { sub ->
                     val now = Timestamp.now()
-                    sub.active && sub.endDate > now && sub.availableChanges > 0
+                    val valid = sub.active && sub.endDate > now && sub.availableChanges > 0
+                    Log.d(TAG, "Suscripción ${sub.id} valid=$valid (active=${sub.active}, endDate=${sub.endDate.toDate()}, availableChanges=${sub.availableChanges})")
+                    valid
                 }
 
                 withContext(Dispatchers.Main) {
                     if (validSubscriptions.isEmpty()) {
+                        Log.d(TAG, "No hay suscripciones válidas")
                         callback(false, null)
                     } else {
                         val principalSub = validSubscriptions.firstOrNull { !it.isPaqueteAdicional }
+                        Log.d(TAG, "Suscripción válida encontrada, principal: ${principalSub != null}")
                         callback(true, principalSub ?: validSubscriptions.first())
                     }
                 }
@@ -114,7 +171,7 @@ class SubscriptionManager(
                             planId = doc.getString("planId") ?: "",
                             startDate = doc.getTimestamp("fechaInicio") ?: Timestamp.now(),
                             endDate = doc.getTimestamp("fechaFin") ?: Timestamp.now(),
-                            active = doc.getString("estado") == "activa",
+                            active = doc.getString("estado") == "activa" || doc.getBoolean("activa") == true,
                             valid = true,
                             totalChangesAllowed = doc.getLong("cambiosTotales")?.toInt() ?: 0,
                             changesUsed = doc.getLong("cambiosRealizados")?.toInt() ?: 0,

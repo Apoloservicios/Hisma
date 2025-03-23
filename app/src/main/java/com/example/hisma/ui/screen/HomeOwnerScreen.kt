@@ -1,5 +1,6 @@
 package com.example.hisma.ui.screen
 
+import android.util.Log
 import androidx.compose.foundation.layout.*
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.ExitToApp
@@ -55,6 +56,7 @@ fun HomeOwnerScreen(navController: NavController) {
                 // Usar el SubscriptionManager actualizado
                 val subscriptionManager = SubscriptionManager(context, auth, db)
                 subscriptionManager.checkActiveSubscription { isActive, subscription ->
+                    Log.d("HomeOwnerScreen", "checkActiveSubscription isActive: $isActive, subscription: $subscription")
                     suscripcionActiva = isActive
                     if (isActive && subscription != null) {
                         cambiosRestantes = subscription.availableChanges
@@ -67,6 +69,8 @@ fun HomeOwnerScreen(navController: NavController) {
                         // Formatear fecha de vencimiento
                         fechaVencimiento = java.text.SimpleDateFormat("dd/MM/yyyy", java.util.Locale.getDefault())
                             .format(subscription.endDate.toDate())
+                    } else {
+                        Log.d("HomeOwnerScreen", "No hay suscripción activa o válida")
                     }
                     isLoadingSuscripcion = false
                 }

@@ -1,5 +1,6 @@
 package com.example.hisma.ui.screen
 
+import android.content.Context
 import android.widget.Toast
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
@@ -7,6 +8,7 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.ArrowBack
+import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
@@ -23,6 +25,7 @@ import com.google.firebase.Timestamp
 import com.google.firebase.auth.FirebaseAuth
 import com.google.firebase.firestore.FirebaseFirestore
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.tasks.await
 import java.text.SimpleDateFormat
 import java.util.*
 
@@ -39,13 +42,18 @@ fun MisSuscripcionesScreen(navController: NavController) {
     var isLoading by remember { mutableStateOf(true) }
     var mostrarDialogoSolicitud by remember { mutableStateOf(false) }
 
-    LaunchedEffect(Unit) {
-        // Cargar suscripciones
-        // Cargar suscripciones
+    // Función para cargar suscripciones
+    fun loadSubscriptions() {
+        isLoading = true
         subscriptionManager.getAllSubscriptions { subscriptionsList ->
             subscriptions = subscriptionsList
             isLoading = false
         }
+    }
+
+    LaunchedEffect(Unit) {
+        // Cargar suscripciones
+        loadSubscriptions()
     }
 
     Scaffold(
@@ -130,6 +138,101 @@ fun MisSuscripcionesScreen(navController: NavController) {
 
                                 Text("Vencimiento: $fechaVencimiento ($diasRestantes días)")
                             }
+                        }
+                    }
+
+                    // Guardar la última sincronización en SharedPreferences
+                    val sharedPrefs = LocalContext.current.getSharedPreferences("subscription_prefs", Context.MODE_PRIVATE)
+                    val lastSyncTime = remember { mutableStateOf(sharedPrefs.getLong("last_sync_time", 0)) }
+                    val currentTime = System.currentTimeMillis()
+                    val oneDayInMillis = 24 * 60 * 60 * 1000
+
+                    // Calcular si puede sincronizar
+                    val canSync = currentTime - lastSyncTime.value > oneDayInMillis ||
+                            subscriptions.all { !it.active || !it.valid }
+
+                    Button(
+                        onClick = {
+                            scope.launch {
+                                try {
+                                    isLoading = true
+                                    val currentUser = auth.currentUser ?: throw Exception("Usuario no autenticado")
+
+                                    // Obtener datos del lubricentro
+                                    val lubDoc = db.collection("lubricentros")
+                                        .document(currentUser.uid)
+                                        .get()
+                                        .await()
+
+                                    val subscription = lubDoc.get("subscription") as? Map<String, Any>
+
+                                    if (subscription != null) {
+                                        val availableChanges = (subscription["availableChanges"] as? Number)?.toInt() ?: 0
+                                        val totalChangesAllowed = (subscription["totalChangesAllowed"] as? Number)?.toInt() ?: 0
+
+                                        // Obtener suscripciones activas
+                                        val suscripcionesSnapshot = db.collection("suscripciones")
+                                            .whereEqualTo("lubricentroId", currentUser.uid)
+                                            .whereEqualTo("estado", "activa")
+                                            .get()
+                                            .await()
+
+                                        if (!suscripcionesSnapshot.isEmpty) {
+                                            // Solo actualizar si los cambios disponibles son mayores
+                                            for (doc in suscripcionesSnapshot.documents) {
+                                                val currentAvailableChanges = doc.getLong("cambiosRestantes")?.toInt() ?: 0
+                                                if (availableChanges > currentAvailableChanges) {
+                                                    db.collection("suscripciones")
+                                                        .document(doc.id)
+                                                        .update(
+                                                            "cambiosTotales", totalChangesAllowed,
+                                                            "cambiosRestantes", availableChanges
+                                                        )
+                                                        .await()
+                                                }
+                                            }
+
+                                            // Guardar timestamp de sincronización
+                                            lastSyncTime.value = currentTime
+                                            sharedPrefs.edit().putLong("last_sync_time", currentTime).apply()
+
+                                            Toast.makeText(context, "Suscripción sincronizada correctamente", Toast.LENGTH_SHORT).show()
+                                            loadSubscriptions()
+                                        } else {
+                                            Toast.makeText(context, "No hay suscripciones activas para sincronizar", Toast.LENGTH_SHORT).show()
+                                        }
+                                    } else {
+                                        Toast.makeText(context, "No hay información de suscripción disponible", Toast.LENGTH_SHORT).show()
+                                    }
+                                } catch (e: Exception) {
+                                    Toast.makeText(context, "Error: ${e.message}", Toast.LENGTH_SHORT).show()
+                                } finally {
+                                    isLoading = false
+                                }
+                            }
+                        },
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(vertical = 8.dp),
+                        enabled = canSync && !isLoading,
+                        colors = ButtonDefaults.buttonColors(
+                            containerColor = MaterialTheme.colorScheme.secondaryContainer,
+                            disabledContainerColor = MaterialTheme.colorScheme.secondaryContainer.copy(alpha = 0.5f)
+                        )
+                    ) {
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.Center
+                        ) {
+                            Icon(
+                                imageVector = Icons.Default.Refresh,
+                                contentDescription = "Sincronizar",
+                                modifier = Modifier.padding(end = 8.dp)
+                            )
+                            Text(
+                                if (canSync) "Sincronizar Información"
+                                else "Sincronización no disponible (24h)"
+                            )
                         }
                     }
 
