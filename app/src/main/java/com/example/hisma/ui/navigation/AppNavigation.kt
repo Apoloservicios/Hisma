@@ -20,7 +20,7 @@ import com.example.hisma.ui.screen.ReportsScreen
 import com.example.hisma.ui.screen.OilChangesListScreen
 import com.example.hisma.ui.screen.RegisterEmployeeScreen
 import com.example.hisma.ui.screen.HomeEmployeeScreen
-import com.example.hisma.ui.screen.MisSuscripcionesScreen
+// import com.example.hisma.ui.screen.MisSuscripcionesScreen
 import com.example.hisma.ui.screen.SubscriptionRequiredScreen
 import com.example.hisma.utils.SubscriptionController
 import com.example.hisma.utils.SubscriptionStatus
@@ -143,9 +143,6 @@ fun AppNavigation(
             OilChangesListScreen(navController)
         }
 
-        composable(Screen.MisSuscripciones.route) {
-            MisSuscripcionesScreen(navController)
-        }
 
         composable(Screen.SubscriptionRequired.route) {
             SubscriptionRequiredScreen(navController)

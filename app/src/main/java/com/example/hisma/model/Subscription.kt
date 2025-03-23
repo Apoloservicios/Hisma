@@ -1,6 +1,7 @@
 package com.example.hisma.model
 
 import com.google.firebase.Timestamp
+import java.util.Date
 
 data class Subscription(
     val id: String = "",
@@ -10,16 +11,22 @@ data class Subscription(
     val endDate: Timestamp = Timestamp.now(),
     val active: Boolean = true,
     val valid: Boolean = true,
-    val totalChangesAllowed: Int = 100,
+    val totalChangesAllowed: Int = 0,
     val changesUsed: Int = 0,
-    val availableChanges: Int = 100,
-    val trialActivated: Boolean = false,
-    val isPaqueteAdicional: Boolean = false,
-    val createdAt: Timestamp = Timestamp.now(),
-    val updatedAt: Timestamp = Timestamp.now()
+    val availableChanges: Int = 0,
+    val isPaqueteAdicional: Boolean = false
 ) {
-    fun calculateIsValid(): Boolean {
-        val now = Timestamp.now()
-        return active && endDate > now && availableChanges > 0
+    fun isValid(): Boolean {
+        val currentTime = Timestamp.now()
+        return active &&
+                endDate.compareTo(currentTime) > 0 &&
+                availableChanges > 0
+    }
+
+    fun getDiasRestantes(): Int {
+        val currentTimeMillis = System.currentTimeMillis()
+        val vencimientoMillis = endDate.toDate().time
+        val diffMillis = vencimientoMillis - currentTimeMillis
+        return (diffMillis / (1000 * 60 * 60 * 24)).toInt()
     }
 }

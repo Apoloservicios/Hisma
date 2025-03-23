@@ -7,7 +7,6 @@ import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.input.PasswordVisualTransformation
@@ -19,14 +18,13 @@ import com.google.firebase.auth.FirebaseAuth
 import com.google.firebase.firestore.FirebaseFirestore
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.tasks.await
-import android.util.Log
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun RegisterScreen(navController: NavController) {
-    val context = LocalContext.current
     val auth = FirebaseAuth.getInstance()
     val db = FirebaseFirestore.getInstance()
+    val subscriptionManager = remember { SubscriptionManager(db) }
     val scope = rememberCoroutineScope()
     val focusManager = LocalFocusManager.current
 
@@ -186,22 +184,21 @@ fun RegisterScreen(navController: NavController) {
                                 "cuit" to cuit,
                                 "direccion" to direccion,
                                 "telefono" to telefono,
-                                "email" to email,
-                                "trialUsed" to false // Añadimos este campo para controlar si ha usado prueba
+                                "email" to email
                             )
                             db.collection("lubricentros").document(uid).set(lubricentroData).await()
 
                             // Crear suscripción de prueba
-                            val subscriptionManager = SubscriptionManager(context, auth, db)
-                            val trialCreated = subscriptionManager.createTrial(uid)
+                            val subscriptionCreated = subscriptionManager.createTrialSubscription(uid)
 
-                            if (!trialCreated) {
-                                Log.e("RegisterScreen", "No se pudo crear la suscripción de prueba")
-                            }
-
-                            isLoading = false
-                            navController.navigate(Screen.EmailVerification.route) {
-                                popUpTo(Screen.Register.route) { inclusive = true }
+                            if (subscriptionCreated) {
+                                isLoading = false
+                                navController.navigate(Screen.EmailVerification.route) {
+                                    popUpTo(Screen.Register.route) { inclusive = true }
+                                }
+                            } else {
+                                isLoading = false
+                                errorMessage = "Error al crear la suscripción de prueba"
                             }
                         } else {
                             isLoading = false

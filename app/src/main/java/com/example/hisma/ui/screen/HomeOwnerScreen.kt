@@ -1,6 +1,5 @@
 package com.example.hisma.ui.screen
 
-import android.util.Log
 import androidx.compose.foundation.layout.*
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.ExitToApp
@@ -9,71 +8,45 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
 import androidx.navigation.NavController
+import com.example.hisma.model.Subscription
 import com.example.hisma.ui.navigation.Screen
-import com.example.hisma.utils.OilChangeManager
+import com.example.hisma.ui.components.SubscriptionInfoCard
 import com.example.hisma.utils.SubscriptionManager
 import com.google.firebase.auth.FirebaseAuth
 import com.google.firebase.firestore.FirebaseFirestore
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.tasks.await
-import java.util.*
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun HomeOwnerScreen(navController: NavController) {
-    val context = LocalContext.current
     val auth = FirebaseAuth.getInstance()
     val db = FirebaseFirestore.getInstance()
     val scope = rememberCoroutineScope()
+    val subscriptionManager = remember { SubscriptionManager(db) }
     var userName by remember { mutableStateOf("Dueño") }
+    var subscription by remember { mutableStateOf<Subscription?>(null) }
     var isLoading by remember { mutableStateOf(true) }
-
-    // Variables para información de suscripción
-    var suscripcionActiva by remember { mutableStateOf(false) }
-    var cambiosRestantes by remember { mutableStateOf(0) }
-    var diasRestantes by remember { mutableStateOf(0) }
-    var fechaVencimiento by remember { mutableStateOf("") }
-    var isLoadingSuscripcion by remember { mutableStateOf(true) }
-
-
-    // En HomeOwnerScreen.kt, en LaunchedEffect:
 
     LaunchedEffect(Unit) {
         try {
             val currentUser = auth.currentUser
             if (currentUser != null) {
-                val doc = db.collection("lubricentros").document(currentUser.uid).get().await()
+                // Cargar información del lubricentro
+                val doc = db.collection("lubricentros")
+                    .document(currentUser.uid)
+                    .get()
+                    .await()
+
                 userName = if (doc.exists() && doc.getString("nombreFantasia") != null)
                     doc.getString("nombreFantasia")!!
                 else
                     currentUser.email ?: "Dueño"
 
-                isLoading = false
-
-                // Usar el SubscriptionManager actualizado
-                val subscriptionManager = SubscriptionManager(context, auth, db)
-                subscriptionManager.checkActiveSubscription { isActive, subscription ->
-                    Log.d("HomeOwnerScreen", "checkActiveSubscription isActive: $isActive, subscription: $subscription")
-                    suscripcionActiva = isActive
-                    if (isActive && subscription != null) {
-                        cambiosRestantes = subscription.availableChanges
-
-                        // Calcular días restantes
-                        val hoy = Calendar.getInstance().time.time
-                        val vencimiento = subscription.endDate.toDate().time
-                        diasRestantes = ((vencimiento - hoy) / (1000L * 60L * 60L * 24L)).toInt()
-
-                        // Formatear fecha de vencimiento
-                        fechaVencimiento = java.text.SimpleDateFormat("dd/MM/yyyy", java.util.Locale.getDefault())
-                            .format(subscription.endDate.toDate())
-                    } else {
-                        Log.d("HomeOwnerScreen", "No hay suscripción activa o válida")
-                    }
-                    isLoadingSuscripcion = false
-                }
+                // Cargar información de suscripción
+                subscription = subscriptionManager.getCurrentSubscription(currentUser.uid)
             } else {
                 navController.navigate(Screen.Login.route) {
                     popUpTo(Screen.HomeOwner.route) { inclusive = true }
@@ -81,8 +54,8 @@ fun HomeOwnerScreen(navController: NavController) {
             }
         } catch (e: Exception) {
             // Manejo de error
+        } finally {
             isLoading = false
-            isLoadingSuscripcion = false
         }
     }
 
@@ -152,62 +125,11 @@ fun HomeOwnerScreen(navController: NavController) {
                     }
                 }
 
-                // Estado de Suscripción
+                // Información de suscripción
+                SubscriptionInfoCard(subscription = subscription)
+
                 Spacer(modifier = Modifier.height(24.dp))
-                Card(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(8.dp)
-                ) {
-                    Column(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .padding(16.dp),
-                        horizontalAlignment = Alignment.CenterHorizontally
-                    ) {
-                        Text(
-                            text = "Estado de Suscripción",
-                            style = MaterialTheme.typography.titleLarge,
-                            color = MaterialTheme.colorScheme.primary
-                        )
-
-                        if (isLoadingSuscripcion) {
-                            CircularProgressIndicator(modifier = Modifier.padding(16.dp))
-                        } else {
-                            Spacer(modifier = Modifier.height(8.dp))
-
-                            if (suscripcionActiva) {
-                                Text(
-                                    text = "Suscripción Activa",
-                                    style = MaterialTheme.typography.bodyLarge,
-                                    color = Color.Green
-                                )
-                                Text("Cambios restantes: $cambiosRestantes")
-                                Text("Días restantes: $diasRestantes")
-                                Text("Vence el: $fechaVencimiento")
-                            } else {
-                                Text(
-                                    text = "Sin Suscripción Activa",
-                                    style = MaterialTheme.typography.bodyLarge,
-                                    color = Color.Red
-                                )
-                                Text("No puedes crear nuevos cambios de aceite")
-                            }
-
-                            Spacer(modifier = Modifier.height(16.dp))
-
-                            Button(
-                                onClick = { navController.navigate(Screen.MisSuscripciones.route) },
-                                modifier = Modifier.fillMaxWidth()
-                            ) {
-                                Text("Ver Mis Suscripciones")
-                            }
-                        }
-                    }
-                }
-
                 // Botones con colores y ancho consistente
-                Spacer(modifier = Modifier.height(24.dp))
                 Button(
                     onClick = { navController.navigate(Screen.ProfileBusiness.route) },
                     modifier = Modifier
@@ -236,7 +158,7 @@ fun HomeOwnerScreen(navController: NavController) {
                     Text("Lista de Cambios de Aceite")
                 }
                 Button(
-                    onClick = { navController.navigate(Screen.Reports.route) },
+                    onClick = { navController.navigate(Screen.Reports.route)  },
                     modifier = Modifier
                         .fillMaxWidth()
                         .padding(vertical = 4.dp),

@@ -1,7 +1,5 @@
 package com.example.hisma.ui.screen
 
-import android.util.Log
-import android.widget.Toast
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.itemsIndexed
@@ -21,14 +19,10 @@ import com.example.hisma.model.OilChange
 import com.example.hisma.ui.dialogs.AddEditOilChangeDialog
 import com.example.hisma.ui.components.OilChangeCard
 import com.example.hisma.utils.OilChangeManager
-import com.example.hisma.utils.SubscriptionManager
 import com.google.firebase.Timestamp
 import com.google.firebase.auth.FirebaseAuth
 import com.google.firebase.firestore.FirebaseFirestore
 import kotlinx.coroutines.launch
-import androidx.compose.ui.platform.LocalLifecycleOwner
-import androidx.lifecycle.Lifecycle
-import androidx.lifecycle.LifecycleEventObserver
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -39,11 +33,6 @@ fun OilChangesListScreen(navController: NavController) {
     val scope = rememberCoroutineScope()
     val oilChangeManager = remember { OilChangeManager(context, auth, db, scope) }
 
-    var suscripcionActiva by remember { mutableStateOf(false) }
-    var cambiosRestantes by remember { mutableStateOf(0) }
-    var cargandoSuscripcion by remember { mutableStateOf(true) }
-    var errorSuscripcion by remember { mutableStateOf<String?>(null) }
-
     // Estados de la UI
     var searchQuery by remember { mutableStateOf("") }
     var oilChanges by remember { mutableStateOf(listOf<OilChange>()) }
@@ -52,80 +41,19 @@ fun OilChangesListScreen(navController: NavController) {
     var selectedChange by remember { mutableStateOf<OilChange?>(null) }
     var nextTicketNumber by remember { mutableStateOf("L-00001") }
 
+    // Cargar la lista al iniciar
     LaunchedEffect(Unit) {
-        Log.d("OilChangesListScreen", "Iniciando carga de cambios de aceite")
         val result = oilChangeManager.loadOilChanges()
-        Log.d("OilChangesListScreen", "Resultado de loadOilChanges: ${result.isSuccess}")
-
         if (result.isSuccess) {
-            val list = result.getOrDefault(emptyList())
-            Log.d("OilChangesListScreen", "Cambios cargados: ${list.size}")
-            oilChanges = list
+            oilChanges = result.getOrDefault(emptyList())
             nextTicketNumber = oilChangeManager.calculateNextTicketNumber(oilChanges)
-        } else {
-            Log.e("OilChangesListScreen", "Error cargando cambios: ${result.exceptionOrNull()?.message}")
-            // Si hay error, probar con datos de prueba temporales
-            oilChanges = listOf(
-                OilChange(
-                    id = "test1",
-                    dominio = "ABC123",
-                    fecha = "01/01/2025",
-                    km = "10000",
-                    proxKm = "15000",
-                    ticketNumber = "L-00001",
-                    createdAt = Timestamp.now()
-                )
-            )
         }
         isLoading = false
-    }
-
-    // Verificar estado de suscripción
-    val subscriptionManager = SubscriptionManager(context, auth, db)
-    subscriptionManager.checkActiveSubscription { isActive, subscription ->
-        Log.d("OilChangesListScreen", "checkActiveSubscription result: isActive=$isActive, subscription=$subscription")
-        suscripcionActiva = isActive
-        cambiosRestantes = if (isActive && subscription != null) subscription.availableChanges else 0
-
-        if (!isActive) {
-            errorSuscripcion = "No hay una suscripción activa válida"
-        }
-
-        cargandoSuscripcion = false
     }
 
     // Filtrar por dominio
     val filteredOilChanges = oilChanges.filter {
         it.dominio.contains(searchQuery, ignoreCase = true)
-    }
-    // Agregar un estado para controlar si la pantalla está activa
-    val lifeCycleOwner = LocalLifecycleOwner.current
-    var isActive by remember { mutableStateOf(true) }
-
-    // Observar el ciclo de vida para saber cuándo la pantalla está activa
-    DisposableEffect(lifeCycleOwner) {
-        val observer = LifecycleEventObserver { _, event ->
-            if (event == Lifecycle.Event.ON_RESUME) {
-                isActive = true
-                // Recargar datos cuando la pantalla vuelve a estar activa
-                scope.launch {
-                    val result = oilChangeManager.loadOilChanges()
-                    if (result.isSuccess) {
-                        oilChanges = result.getOrDefault(emptyList())
-                        nextTicketNumber = oilChangeManager.calculateNextTicketNumber(oilChanges)
-                    }
-                    isLoading = false
-                }
-            } else if (event == Lifecycle.Event.ON_PAUSE) {
-                isActive = false
-            }
-        }
-
-        lifeCycleOwner.lifecycle.addObserver(observer)
-
-        onDispose {
-            lifeCycleOwner.lifecycle.removeObserver(observer)
-        }
     }
 
     Scaffold(
@@ -141,16 +69,8 @@ fun OilChangesListScreen(navController: NavController) {
         },
         floatingActionButton = {
             FloatingActionButton(onClick = {
-                if (suscripcionActiva && cambiosRestantes > 0) {
-                    selectedChange = null
-                    showDialog = true
-                } else {
-                    Toast.makeText(
-                        context,
-                        "No puedes crear nuevos cambios. Verifica tu suscripción.",
-                        Toast.LENGTH_LONG
-                    ).show()
-                }
+                selectedChange = null
+                showDialog = true
             }) {
                 Icon(Icons.Default.Add, contentDescription = "Agregar")
             }
@@ -255,15 +175,7 @@ fun OilChangesListScreen(navController: NavController) {
                                 }
                             }
                         }
-                    }else {
-                        // AÑADE ESTO:
-                        val error = result.exceptionOrNull()?.message ?: "Error desconocido al guardar"
-                        Toast.makeText(context, error, Toast.LENGTH_LONG).show()
-                        Log.e("OilChangesListScreen", "Error al guardar: $error")
                     }
-
-
-
                 }
                 showDialog = false
             }

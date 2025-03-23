@@ -9,7 +9,6 @@ import android.widget.Toast
 import androidx.core.content.FileProvider
 import com.example.hisma.model.Lubricentro
 import com.example.hisma.model.OilChange
-import com.google.firebase.Timestamp
 import com.google.firebase.auth.FirebaseAuth
 import com.google.firebase.firestore.FirebaseFirestore
 import com.google.firebase.firestore.Query
@@ -18,8 +17,6 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.tasks.await
 import java.io.File
 import java.net.URLEncoder
-import java.text.SimpleDateFormat
-import java.util.*
 
 /**
  * Clase para manejar todas las operaciones relacionadas con los cambios de aceite
@@ -30,138 +27,40 @@ class OilChangeManager(
     private val db: FirebaseFirestore,
     private val scope: CoroutineScope
 ) {
+    private val subscriptionManager = SubscriptionManager(db)
+
     /**
-     * Verifica si el lubricentro tiene una suscripción activa con cambios disponibles
+     * Verifica si hay una suscripción válida antes de realizar operaciones
      */
-    suspend fun verificarSuscripcion(): Result<Map<String, Any>> {
+    suspend fun verificarSuscripcion(): Result<Boolean> {
         return try {
             val currentUser = auth.currentUser ?: return Result.failure(Exception("Usuario no autenticado"))
 
-            // Obtener suscripciones activas
-            val snapshot = db.collection("suscripciones")
-                .whereEqualTo("lubricentroId", currentUser.uid)
-                .whereEqualTo("estado", "activa")
-                .get()
-                .await()
-
-            if (snapshot.isEmpty) {
-                return Result.failure(Exception("No hay suscripciones activas"))
+            val isValid = subscriptionManager.checkCurrentSubscription(currentUser.uid)
+            if (isValid) {
+                Result.success(true)
+            } else {
+                Result.failure(Exception("Suscripción inválida o expirada"))
             }
-
-            val suscripciones = snapshot.documents.mapNotNull { doc ->
-                val data = doc.data
-                if (data != null) {
-                    val id = doc.id
-                    val fechaFin = data["fechaFin"] as? com.google.firebase.Timestamp ?: com.google.firebase.Timestamp.now()
-                    val cambiosRestantes = (data["cambiosRestantes"] as? Long)?.toInt() ?: 0
-                    val isPaqueteAdicional = data["isPaqueteAdicional"] as? Boolean ?: false
-
-                    arrayOf(id, fechaFin, cambiosRestantes, isPaqueteAdicional)
-                } else null
-            }
-
-            // Verificar si hay suscripción principal activa y no vencida
-            val suscripcionPrincipal = suscripciones.firstOrNull { !(it[3] as Boolean) }
-            if (suscripcionPrincipal == null) {
-                return Result.failure(Exception("No hay suscripción principal activa"))
-            }
-
-            val hoy = com.google.firebase.Timestamp.now()
-            if ((suscripcionPrincipal[1] as com.google.firebase.Timestamp) < hoy) {
-                return Result.failure(Exception("La suscripción está vencida"))
-            }
-
-            // Calcular cambios disponibles (principal + adicionales)
-            val totalCambiosRestantes = suscripciones.sumOf { (it[2] as Int) }
-            if (totalCambiosRestantes <= 0) {
-                return Result.failure(Exception("No quedan cambios disponibles"))
-            }
-
-            // Calcular días restantes
-            val millisHastaVencimiento = (suscripcionPrincipal[1] as com.google.firebase.Timestamp).toDate().time - hoy.toDate().time
-            val diasRestantes = (millisHastaVencimiento / (1000 * 60 * 60 * 24)).toInt()
-
-            // Devolver información de suscripción
-            val result = mapOf(
-                "suscripcionActiva" to true,
-                "diasRestantes" to diasRestantes,
-                "cambiosRestantes" to totalCambiosRestantes,
-                "fechaVencimiento" to (suscripcionPrincipal[1] as com.google.firebase.Timestamp)
-            )
-
-            Result.success(result)
         } catch (e: Exception) {
+            Log.e(TAG, "Error verificando suscripción", e)
             Result.failure(e)
         }
     }
 
     /**
-     * Registra el uso de un cambio (decrementa contador)
-     */
-    private suspend fun registrarUsoCambio() {
-        try {
-            val currentUser = auth.currentUser ?: throw Exception("Usuario no autenticado")
-
-            // Obtener suscripciones activas ordenadas: primero paquetes adicionales, luego principal
-            val snapshot = db.collection("suscripciones")
-                .whereEqualTo("lubricentroId", currentUser.uid)
-                .whereEqualTo("estado", "activa")
-                .get()
-                .await()
-
-            val suscripciones = snapshot.documents.mapNotNull { doc ->
-                val data = doc.data
-                if (data != null) {
-                    val id = doc.id
-                    val cambiosRestantes = (data["cambiosRestantes"] as? Long)?.toInt() ?: 0
-                    val isPaqueteAdicional = data["isPaqueteAdicional"] as? Boolean ?: false
-
-                    Triple(id, cambiosRestantes, isPaqueteAdicional)
-                } else null
-            }
-
-            // Primero usar paquetes adicionales
-            val paqueteAdicional = suscripciones.firstOrNull { it.third && it.second > 0 }
-            if (paqueteAdicional != null) {
-                // Decrementar cambios en paquete adicional
-                db.collection("suscripciones").document(paqueteAdicional.first)
-                    .update(
-                        mapOf(
-                            "cambiosRealizados" to com.google.firebase.firestore.FieldValue.increment(1),
-                            "cambiosRestantes" to com.google.firebase.firestore.FieldValue.increment(-1L)
-                        )
-                    ).await()
-                return
-            }
-
-            // Si no hay paquetes adicionales, usar suscripción principal
-            val suscripcionPrincipal = suscripciones.firstOrNull { !it.third && it.second > 0 }
-            if (suscripcionPrincipal != null) {
-                db.collection("suscripciones").document(suscripcionPrincipal.first)
-                    .update(
-                        mapOf(
-                            "cambiosRealizados" to com.google.firebase.firestore.FieldValue.increment(1),
-                            "cambiosRestantes" to com.google.firebase.firestore.FieldValue.increment(-1L)
-                        )
-                    ).await()
-                return
-            }
-
-            throw Exception("No hay cambios disponibles")
-        } catch (e: Exception) {
-            Log.e(TAG, "Error al registrar uso de cambio", e)
-            throw e
-        }
-    }
-    /**
      * Carga todos los cambios de aceite del usuario actual
      */
     suspend fun loadOilChanges(): Result<List<OilChange>> {
         return try {
-            val currentUser =
-                auth.currentUser ?: return Result.failure(Exception("Usuario no autenticado"))
+            // Primero verificamos que haya una suscripción válida
+            val subscriptionResult = verificarSuscripcion()
+            if (subscriptionResult.isFailure) {
+                return Result.failure(subscriptionResult.exceptionOrNull()
+                    ?: Exception("Error de suscripción"))
+            }
 
-            Log.d(TAG, "Cargando cambios de aceite para usuario: ${currentUser.uid}")
+            val currentUser = auth.currentUser ?: return Result.failure(Exception("Usuario no autenticado"))
 
             val snapshot = db.collection("lubricentros")
                 .document(currentUser.uid)
@@ -170,31 +69,20 @@ class OilChangeManager(
                 .get()
                 .await()
 
-            Log.d(TAG, "Documentos encontrados: ${snapshot.documents.size}")
-
-            if (snapshot.isEmpty) {
-                Log.d(TAG, "No se encontraron cambios de aceite")
-                return Result.success(emptyList())
+            val list = snapshot.documents.map { doc ->
+                doc.toObject(OilChange::class.java)!!.copy(id = doc.id)
             }
 
-            val list = snapshot.documents.mapNotNull { doc ->
-                try {
-                    Log.d(TAG, "Procesando documento: ${doc.id}")
-                    doc.toObject(OilChange::class.java)?.copy(id = doc.id)
-                } catch (e: Exception) {
-                    Log.e(TAG, "Error al procesar documento ${doc.id}: ${e.message}")
-                    null
-                }
-            }
-
-            Log.d(TAG, "Cambios de aceite cargados con éxito: ${list.size}")
             Result.success(list)
         } catch (e: Exception) {
-            Log.e(TAG, "Error al cargar lista de cambios de aceite: ${e.message}", e)
+            Log.e(TAG, "Error al cargar lista de cambios de aceite", e)
             Result.failure(e)
         }
     }
 
+    /**
+     * Calcula el siguiente número de ticket basado en la lista actual
+     */
     fun calculateNextTicketNumber(oilChanges: List<OilChange>): String {
         return if (oilChanges.isNotEmpty()) {
             val ticketNumbers = oilChanges.mapNotNull {
@@ -207,52 +95,30 @@ class OilChangeManager(
         }
     }
 
+    /**
+     * Guarda un cambio de aceite (nuevo o actualización)
+     */
     suspend fun saveOilChange(oil: OilChange): Result<OilChange> {
         return try {
-            val currentUser = auth.currentUser ?:
-            return Result.failure(Exception("Usuario no autenticado"))
-
-            // Solo para nuevos cambios (no actualizaciones)
-            if (oil.id.isBlank()) {
-                // Verificar si hay suscripciones activas con cambios disponibles
-                val subscriptionsQuery = db.collection("suscripciones")
-                    .whereEqualTo("lubricentroId", currentUser.uid)
-                    .whereEqualTo("estado", "activa")
-                    .get()
-                    .await()
-
-                if (subscriptionsQuery.isEmpty) {
-                    return Result.failure(Exception("No hay suscripciones activas"))
+            // Verificamos suscripción antes de guardar
+            if (oil.id.isBlank()) {  // Solo para nuevos cambios
+                val subscriptionResult = verificarSuscripcion()
+                if (subscriptionResult.isFailure) {
+                    return Result.failure(subscriptionResult.exceptionOrNull()
+                        ?: Exception("Error de suscripción"))
                 }
 
-                // Verificar si hay cambios disponibles
-                val subscriptions = subscriptionsQuery.documents.mapNotNull {
-                    val cambiosRestantes = it.getLong("cambiosRestantes")?.toInt() ?: 0
-                    if (cambiosRestantes > 0) Triple(it.id, it.getString("tipo") ?: "principal", cambiosRestantes)
-                    else null
-                }
+                val currentUser = auth.currentUser ?: return Result.failure(Exception("Usuario no autenticado"))
 
-                if (subscriptions.isEmpty()) {
-                    return Result.failure(Exception("No hay cambios disponibles"))
+                // Verificar que tenga cambios disponibles y decrementar
+                val decremented = subscriptionManager.decrementAvailableChanges(currentUser.uid)
+                if (!decremented) {
+                    return Result.failure(Exception("No tienes cambios disponibles en tu suscripción"))
                 }
-
-                // Ordenar: primero adicionales, luego principales
-                val sortedSubscriptions = subscriptions.sortedBy {
-                    if (it.second == "adicional") 0 else 1
-                }
-
-                // Decrementar cambio
-                db.collection("suscripciones")
-                    .document(sortedSubscriptions.first().first)
-                    .update(
-                        "cambiosRestantes", com.google.firebase.firestore.FieldValue.increment(-1),
-                        "cambiosUsados", com.google.firebase.firestore.FieldValue.increment(1),
-                        "updatedAt", Timestamp.now()
-                    )
-                    .await()
             }
 
-            // Guardar cambio de aceite (el código que ya tenías)
+            val currentUser = auth.currentUser ?: return Result.failure(Exception("Usuario no autenticado"))
+
             val docRef = if (oil.id.isBlank()) {
                 db.collection("lubricentros")
                     .document(currentUser.uid)
@@ -266,20 +132,25 @@ class OilChangeManager(
             }
 
             docRef.set(oil).await()
+            val savedOil = if (oil.id.isBlank()) {
+                oil.copy(id = docRef.id)
+            } else {
+                oil
+            }
 
-            Result.success(
-                if (oil.id.isBlank()) oil.copy(id = docRef.id) else oil
-            )
+            Result.success(savedOil)
         } catch (e: Exception) {
-            Log.e(TAG, "Error guardando cambio de aceite: ${e.message}")
+            Log.e(TAG, "Error al guardar cambio de aceite", e)
             Result.failure(e)
         }
     }
 
+    /**
+     * Elimina un cambio de aceite
+     */
     suspend fun deleteOilChange(oilId: String): Result<Unit> {
         return try {
-            val currentUser =
-                auth.currentUser ?: return Result.failure(Exception("Usuario no autenticado"))
+            val currentUser = auth.currentUser ?: return Result.failure(Exception("Usuario no autenticado"))
 
             db.collection("lubricentros")
                 .document(currentUser.uid)
@@ -321,34 +192,14 @@ class OilChangeManager(
     }
 
     /**
-     * Obtiene los cambios de aceite próximos (dentro de los próximos 30 días)
+     * Obtiene un URI para un archivo PDF utilizando FileProvider
      */
-    suspend fun getProximosCambios(): Result<List<OilChange>> {
-        return try {
-            val allChanges = loadOilChanges().getOrDefault(emptyList())
-            val currentDate = Calendar.getInstance().time
-            val sdf = SimpleDateFormat("dd/MM/yyyy", Locale.getDefault())
-
-            val proximosCambios = allChanges.filter { change ->
-                if (change.proximaFecha.isBlank()) return@filter false
-
-                try {
-                    val proximaFecha = sdf.parse(change.proximaFecha) ?: return@filter false
-                    val diffInMillis = proximaFecha.time - currentDate.time
-                    val diffInDays = diffInMillis / (1000 * 60 * 60 * 24)
-
-                    // Si está dentro de los próximos 30 días y no ha vencido
-                    diffInDays in 0..30
-                } catch (e: Exception) {
-                    false
-                }
-            }.sortedBy { it.proximaFecha }
-
-            Result.success(proximosCambios)
-        } catch (e: Exception) {
-            Log.e(TAG, "Error al obtener próximos cambios", e)
-            Result.failure(e)
-        }
+    private fun getPdfUri(pdfFile: File): Uri {
+        return FileProvider.getUriForFile(
+            context,
+            "${context.packageName}.provider",
+            pdfFile
+        )
     }
 
     /**
@@ -364,11 +215,7 @@ class OilChangeManager(
             val pdfFile = generateFancyPdf(lub, oil, context, logoBitmap)
             if (pdfFile != null) {
                 // Abrir el PDF
-                val uri = FileProvider.getUriForFile(
-                    context,
-                    context.packageName + ".provider",
-                    pdfFile
-                )
+                val uri = getPdfUri(pdfFile)
                 val openIntent = Intent(Intent.ACTION_VIEW).apply {
                     setDataAndType(uri, "application/pdf")
                     addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
@@ -396,11 +243,7 @@ class OilChangeManager(
             val pdfFile = generateFancyPdf(lub, oil, context, logoBitmap)
             if (pdfFile != null) {
                 // Compartir genéricamente
-                val uri = FileProvider.getUriForFile(
-                    context,
-                    context.packageName + ".provider",
-                    pdfFile
-                )
+                val uri = getPdfUri(pdfFile)
                 val shareIntent = Intent(Intent.ACTION_SEND).apply {
                     type = "application/pdf"
                     putExtra(Intent.EXTRA_STREAM, uri)
@@ -442,45 +285,18 @@ class OilChangeManager(
             // Preparar el mensaje
             val contactName = oil.contactName.takeIf { it.isNotBlank() } ?: "Cliente"
             val lubricentroName = lub.nombreFantasia.takeIf { it.isNotBlank() } ?: "Lubricentro"
-
-            // Verificar si es recordatorio de próximo cambio
-            val mensaje = if (oil.proximaFecha.isNotBlank()) {
-                val currentDate = Calendar.getInstance().time
-                val sdf = SimpleDateFormat("dd/MM/yyyy", Locale.getDefault())
-                try {
-                    val proximaFecha = sdf.parse(oil.proximaFecha)
-                    if (proximaFecha != null) {
-                        if (proximaFecha.before(currentDate)) {
-                            // Cambio vencido
-                            "Hola ${contactName}! Le recordamos que tenía programado un cambio de aceite para el ${oil.proximaFecha}. Por favor contáctenos para programar una nueva cita. ${lubricentroName} agradece su confianza."
-                        } else {
-                            // Próximo cambio
-                            "Hola ${contactName}! Le recordamos que tiene programado un cambio de aceite para el ${oil.proximaFecha}. Puede contactarnos para agendar su cita. ${lubricentroName} agradece su confianza."
-                        }
-                    } else {
-                        "Hola ${contactName}! Te envío el detalle de tu cambio de aceite. ${lubricentroName} agradece tu confianza."
-                    }
-                } catch (e: Exception) {
-                    "Hola ${contactName}! Te envío el detalle de tu cambio de aceite. ${lubricentroName} agradece tu confianza."
-                }
-            } else {
-                "Hola ${contactName}! Te envío el detalle de tu cambio de aceite. ${lubricentroName} agradece tu confianza."
-            }
+            val message = "Hola ${contactName}! Te envío el detalle de tu cambio de aceite. ${lubricentroName} agradece tu confianza."
 
             // Formatear número de teléfono
             val phoneNumber = formatPhoneNumber(oil.contactCell)
             Log.d(TAG, "Enviando a número: $phoneNumber")
 
             // Conseguir URI del PDF
-            val pdfUri = FileProvider.getUriForFile(
-                context,
-                context.packageName + ".provider",
-                pdfFile
-            )
+            val pdfUri = getPdfUri(pdfFile)
 
             // Intento 1: Enviar directamente con número específico y PDF adjunto
             val intentDirecto = Intent(Intent.ACTION_SEND).apply {
-                putExtra(Intent.EXTRA_TEXT, mensaje)
+                putExtra(Intent.EXTRA_TEXT, message)
                 putExtra(Intent.EXTRA_STREAM, pdfUri)
                 putExtra("jid", "${phoneNumber}@s.whatsapp.net") // Dirección específica de WhatsApp
                 type = "application/pdf"
@@ -503,10 +319,9 @@ class OilChangeManager(
             try {
                 // Esto intenta abrir WhatsApp y compartir directamente el PDF
                 val whatsappIntent = Intent("android.intent.action.SEND")
-                whatsappIntent.component =
-                    ComponentName("com.whatsapp", "com.whatsapp.ContactPicker")
+                whatsappIntent.component = ComponentName("com.whatsapp", "com.whatsapp.ContactPicker")
                 whatsappIntent.putExtra("jid", "${phoneNumber}@s.whatsapp.net")
-                whatsappIntent.putExtra(Intent.EXTRA_TEXT, mensaje)
+                whatsappIntent.putExtra(Intent.EXTRA_TEXT, message)
                 whatsappIntent.putExtra(Intent.EXTRA_STREAM, pdfUri)
                 whatsappIntent.type = "application/pdf"
                 whatsappIntent.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
@@ -522,7 +337,7 @@ class OilChangeManager(
             try {
                 val sendIntent = Intent("android.intent.action.SEND")
                 sendIntent.component = ComponentName("com.whatsapp", "com.whatsapp.ContactPicker")
-                sendIntent.putExtra(Intent.EXTRA_TEXT, mensaje)
+                sendIntent.putExtra(Intent.EXTRA_TEXT, message)
                 sendIntent.putExtra(Intent.EXTRA_STREAM, pdfUri)
                 sendIntent.type = "application/pdf"
                 sendIntent.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
@@ -544,9 +359,8 @@ class OilChangeManager(
             // Última alternativa: Hacerlo en dos pasos
             // Primero abrir el chat con el contacto
             try {
-                val encodedMessage = URLEncoder.encode(mensaje, "UTF-8")
-                val whatsappUrl =
-                    "https://api.whatsapp.com/send?phone=$phoneNumber&text=$encodedMessage"
+                val encodedMessage = URLEncoder.encode(message, "UTF-8")
+                val whatsappUrl = "https://api.whatsapp.com/send?phone=$phoneNumber&text=$encodedMessage"
                 val whatsappIntent = Intent(Intent.ACTION_VIEW, Uri.parse(whatsappUrl))
 
                 if (whatsappIntent.resolveActivity(context.packageManager) != null) {
@@ -588,9 +402,6 @@ class OilChangeManager(
 
     /**
      * Formatea un número de teléfono para WhatsApp API
-     * Ejemplos:
-     * - "11 1234 5678" -> "5491112345678" (Argentina)
-     * - "1512345678" -> "5491512345678" (Argentina, con 15)
      */
     private fun formatPhoneNumber(phone: String): String {
         // Eliminar espacios, guiones, paréntesis y otros caracteres no numéricos
@@ -643,37 +454,6 @@ class OilChangeManager(
             }
         }.also {
             Log.d(TAG, "Número formateado para WhatsApp: $it")
-        }
-    }
-    suspend fun verificarSuscripcionActiva(lubricentroId: String = auth.currentUser?.uid ?: ""): Boolean {
-        return try {
-            // Primero comprobamos en la colección de suscripciones
-            val query = db.collection("suscripciones")
-                .whereEqualTo("lubricentroId", lubricentroId)
-                .whereEqualTo("activa", true)
-                .get()
-                .await()
-
-            if (!query.isEmpty) {
-                Log.d(TAG, "Suscripción activa encontrada en colección suscripciones")
-                return true
-            }
-
-            // Como respaldo, verificamos el campo subscription dentro del documento lubricentro
-            val lubDoc = db.collection("lubricentros")
-                .document(lubricentroId)
-                .get()
-                .await()
-
-            val subscription = lubDoc.get("subscription") as? Map<String, Any>
-            val suscripcionActiva = subscription?.get("suscripcionActiva") as? Boolean ?: false
-
-            Log.d(TAG, "Estado de suscripción desde campo subscription: $suscripcionActiva")
-            suscripcionActiva
-
-        } catch (e: Exception) {
-            Log.e(TAG, "Error al verificar suscripción: ${e.message}", e)
-            false
         }
     }
 
